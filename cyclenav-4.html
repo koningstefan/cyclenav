@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>CycleNav</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #14171a;
+    --accent: #ff5a1f;
+    --ok: #1ab35e;
+    --muted: #8a8f94;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  #map { position: absolute; inset: 0; z-index: 1; }
+
+  /* ---- Edit mode top controls ---- */
+  #editBar {
+    position: absolute;
+    top: max(14px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 500;
+    display: flex;
+    gap: 6px;
+    background: rgba(20,23,26,0.92);
+    padding: 5px;
+    border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  }
+  .seg {
+    border: none;
+    background: transparent;
+    color: #cfd3d6;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 13px;
+    border-radius: 999px;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+  }
+  .seg.active { background: var(--accent); color: white; }
+  .seg.clearBtn { color: #ff8f6b; }
+
+  /* ---- Bottom action button ---- */
+  #rideBtn {
+    position: absolute;
+    left: 50%;
+    bottom: max(22px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 500;
+    border: none;
+    background: var(--ink);
+    color: white;
+    font-size: 17px;
+    font-weight: 700;
+    padding: 16px 40px;
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  }
+  #rideBtn:disabled { background: #b9bcbf; }
+
+  #unlockBtn {
+    position: absolute;
+    top: max(14px, env(safe-area-inset-top));
+    right: 14px;
+    z-index: 500;
+    border: none;
+    background: rgba(20,23,26,0.85);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: 999px;
+  }
+
+  /* ---- View mode toggle (3D follow / normal), shown while riding ---- */
+  #viewModeBtn {
+    position: absolute;
+    top: max(14px, env(safe-area-inset-top));
+    left: 14px;
+    z-index: 500;
+    display: none;
+    border: none;
+    background: rgba(20,23,26,0.85);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: 999px;
+  }
+
+  /* ---- Nav overlay (riding): small compass + distance ---- */
+  #navPanel {
+    position: absolute;
+    top: max(60px, calc(env(safe-area-inset-top) + 46px));
+    left: 14px;
+    z-index: 500;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    background: rgba(20,23,26,0.9);
+    border-radius: 16px;
+    padding: 8px 10px 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  }
+  #compassWrap { position: relative; width: 82px; height: 82px; }
+  #compassWrap svg { width: 100%; height: 100%; }
+  #compassNeedle { position: absolute; inset: 0; transform-origin: 50% 50%; transition: transform 0.1s linear; }
+  #speedVal { color: #fff; font-size: 20px; font-weight: 800; text-align: center; line-height: 1; margin-top: 2px; }
+  #speedVal .unit { font-size: 10px; font-weight: 600; color: var(--muted); margin-left: 3px; }
+  #navDist { color: #fff; font-size: 13px; font-weight: 700; text-align: center; line-height: 1.3; }
+  #navDist .dim { color: var(--muted); font-weight: 500; font-size: 10px; display: block; }
+
+  /* ---- Ride data button ---- */
+  #rideDataBtn {
+    position: absolute;
+    top: max(56px, calc(env(safe-area-inset-top) + 46px));
+    right: 14px;
+    z-index: 500;
+    display: none;
+    border: none;
+    background: rgba(20,23,26,0.85);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: 999px;
+  }
+
+  /* ---- Floating edge indicator (star) ---- */
+  #edgeStar {
+    position: fixed; top: 0; left: 0; z-index: 480;
+    font-size: 30px; line-height: 1;
+    transform: translate(-100px, -100px);
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+    display: none;
+    pointer-events: none;
+  }
+
+  /* ---- Recenter button ---- */
+  #recenterBtn {
+    position: absolute;
+    right: 14px;
+    bottom: max(110px, calc(env(safe-area-inset-bottom) + 100px));
+    z-index: 500;
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(20,23,26,0.9);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+  }
+  #recenterBtn svg { width: 22px; height: 22px; }
+
+  .pulse-target { animation: pulseRing 1.1s ease-out infinite; border-radius: 50%; }
+  @keyframes pulseRing {
+    0%   { box-shadow: 0 0 0 0 rgba(255,90,31,0.55); }
+    70%  { box-shadow: 0 0 0 16px rgba(255,90,31,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,90,31,0); }
+  }
+
+  /* ---- Markers ---- */
+  .wp-pin {
+    background:#14171a; color:white; font-weight:700; font-size:13px;
+    width:26px; height:26px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    border:2px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.3);
+  }
+  .ep-pin { font-size:26px; line-height:1; }
+  .me-dot { width:18px; height:18px; border-radius:50%; background:#2b7de9; border:3px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.4); }
+
+  #finishToast {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 600; background: var(--ok); color: white; font-weight: 700; font-size: 18px;
+    padding: 16px 26px; border-radius: 16px; display: none; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+
+  #permOverlay {
+    position: absolute; inset: 0; z-index: 900; background: rgba(20,23,26,0.96); color: white;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 30px; gap: 16px;
+  }
+  #permOverlay button { background: var(--accent); color: white; border: none; font-size: 16px; font-weight: 700; padding: 14px 30px; border-radius: 999px; }
+  #permOverlay p { max-width: 300px; color: #cfd3d6; font-size: 14px; line-height: 1.5; }
+
+  /* ---- Bottom sheet modals (reorder + ride data) ---- */
+  #reorderOverlay, #rideDataOverlay {
+    position: absolute; inset: 0; z-index: 800; background: rgba(20,23,26,0.55);
+    display: none; align-items: flex-end;
+  }
+  #reorderSheet, #rideDataSheet {
+    width: 100%; max-height: 70vh; background: #fff; border-radius: 20px 20px 0 0;
+    padding: 16px 14px max(16px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 -8px 30px rgba(0,0,0,0.3);
+  }
+  #reorderSheet h3, #rideDataSheet h3 { margin: 0 0 4px; font-size: 16px; color: var(--ink); }
+  #reorderList { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; touch-action: none; }
+  .reorderRow {
+    display: flex; align-items: center; gap: 10px;
+    background: #f3f2ef; border-radius: 12px; padding: 10px 12px;
+    user-select: none;
+  }
+  .reorderRow.dragging { opacity: 0.6; background: #e9e7e2; }
+  .rr-num { width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: white; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .rr-num.rr-finish { background: var(--ok); font-size: 14px; }
+  .rr-handle { margin-left: auto; color: #b7b3ac; font-size: 18px; padding: 4px 8px; }
+  #reorderDone, #rideDataClose {
+    margin-top: 6px; border: none; background: var(--ink); color: white; font-weight: 700;
+    padding: 13px; border-radius: 12px; font-size: 15px;
+  }
+  .dataRow {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 12px 4px; border-bottom: 1px solid #eee;
+  }
+  .dataRow:last-of-type { border-bottom: none; }
+  .dataRow .label { color: #6b6f73; font-size: 14px; }
+  .dataRow .value { color: var(--ink); font-size: 18px; font-weight: 700; }
+
+  .maplibregl-ctrl-attrib { font-size: 9px !important; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="editBar">
+  <button class="seg active" id="modePoint">+ Point</button>
+  <button class="seg" onclick="openReorder()">Reorder</button>
+  <button class="seg clearBtn" onclick="clearAll()">Clear</button>
+</div>
+
+<button id="rideBtn" onclick="toggleRide()" disabled>Ride</button>
+<button id="unlockBtn" style="display:none" onclick="toggleRide()">Unlock</button>
+<button id="viewModeBtn" onclick="toggleViewMode()">Normal map</button>
+<button id="rideDataBtn" onclick="openRideData()">Ride data</button>
+
+<button id="recenterBtn" onclick="recenterMap()" aria-label="Center on my location">
+  <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="12" cy="12" r="3" fill="white" stroke="none"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke-linecap="round"/></svg>
+</button>
+
+<div id="navPanel">
+  <div id="compassWrap">
+    <svg viewBox="0 0 54 54">
+      <circle cx="27" cy="27" r="25" fill="none" stroke="#3a3f44" stroke-width="2"/>
+      <text x="27" y="10" fill="#8a8f94" font-size="7" text-anchor="middle" font-weight="700">N</text>
+    </svg>
+    <div id="compassNeedle">
+      <svg viewBox="0 0 54 54">
+        <path d="M27 8 L32 27 L27 23 L22 27 Z" fill="#ff5a1f"/>
+        <path d="M27 46 L32 27 L27 31 L22 27 Z" fill="#5a5f64"/>
+      </svg>
+    </div>
+  </div>
+  <div id="speedVal">0<span class="unit">km/h</span></div>
+  <div id="navDist">
+    <span id="navDistVal">--</span>
+    <span class="dim" id="navNext">to next point</span>
+  </div>
+</div>
+
+<div id="edgeStar">⭐</div>
+
+<div id="finishToast">🏁 Route complete</div>
+
+<div id="reorderOverlay">
+  <div id="reorderSheet">
+    <h3>Reorder points</h3>
+    <p style="margin:0;color:#8a8f94;font-size:12px;">The last point in the list is the finish.</p>
+    <div id="reorderList"></div>
+    <button id="reorderDone" onclick="closeReorder()">Done</button>
+  </div>
+</div>
+
+<div id="rideDataOverlay">
+  <div id="rideDataSheet">
+    <h3>Ride data</h3>
+    <div class="dataRow"><span class="label">Current time</span><span class="value" id="rdTime">--</span></div>
+    <div class="dataRow"><span class="label">Sundown</span><span class="value" id="rdSunset">--</span></div>
+    <div class="dataRow"><span class="label">Average speed</span><span class="value" id="rdAvgSpeed">--</span></div>
+    <div class="dataRow"><span class="label">Total distance</span><span class="value" id="rdDistance">--</span></div>
+    <button id="rideDataClose" onclick="closeRideData()">Close</button>
+  </div>
+</div>
+
+<div id="permOverlay">
+  <p style="font-size:20px;font-weight:700;color:white;margin:0;">CycleNav needs two permissions</p>
+  <p>Location, to show you on the map, and motion/compass, so the direction arrow and 3D view know which way you're facing.</p>
+  <button onclick="requestPermissions()">Allow &amp; start</button>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/suncalc"></script>
+<script>
+// ---------- State ----------
+let map, meMarker;
+let points = [];         // ordered list of {lat,lng,marker}; last item is always the finish
+let locked = false;
+let routeSeq = [];       // frozen copy of points when locked
+let visitedCount = 0;
+
+let currentPos = null;   // {lat,lng}
+let heading = null;      // degrees, 0 = facing north
+let watchId = null;
+
+let viewMode = 'follow'; // 'follow' (3D, rotates with heading) or 'normal' (flat, free pan)
+
+let compassAngle = null; // unwrapped rotation (can exceed 0-360) so the needle never snaps at North
+let currentSpeedKmh = 0;
+let lastSpeedFix = null; // {lat,lng,t} fallback speed calc when coords.speed is unavailable
+
+let rideStartTime = null;
+let totalDistanceMeters = 0;
+let lastDistFix = null;  // last point counted into totalDistanceMeters
+
+const ARRIVAL_METERS = 25;
+
+// ---------- Map setup ----------
+function initMap() {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: {
+      version: 8,
+      sources: {
+        cyclosm: {
+          type: 'raster',
+          tiles: [
+            'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://b.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',
+            'https://c.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png'
+          ],
+          tileSize: 256,
+          maxzoom: 20,
+          attribution: '&copy; OpenStreetMap contributors, CyclOSM'
+        }
+      },
+      layers: [
+        { id: 'cyclosm', type: 'raster', source: 'cyclosm' }
+      ]
+    },
+    center: [5.12, 52.09],
+    zoom: 14,
+    pitch: 55,
+    bearing: 0,
+    attributionControl: { compact: true }
+  });
+
+  map.on('click', onMapClick);
+  map.on('moveend', () => { if (locked) updateNav(); });
+}
+
+function onMapClick(e) {
+  if (locked) return;
+  addPoint(e.lngLat);
+  updateRideButton();
+}
+
+function recenterMap() {
+  if (!currentPos) return;
+  map.flyTo({ center: [currentPos.lng, currentPos.lat], zoom: Math.max(map.getZoom(), 16), duration: 500 });
+}
+
+// ---------- Markers ----------
+function setPinContent(el, isFinish, num) {
+  if (isFinish) {
+    el.className = 'ep-pin';
+    el.innerHTML = '🏁';
+  } else {
+    el.className = 'wp-pin';
+    el.innerHTML = `<span class="wp-num">${num}</span>`;
+  }
+}
+
+function addPoint(lngLat) {
+  const el = document.createElement('div');
+  const marker = new maplibregl.Marker({ element: el, draggable: !locked }).setLngLat([lngLat.lng, lngLat.lat]).addTo(map);
+  const p = { lat: lngLat.lat, lng: lngLat.lng, marker };
+  marker.on('dragend', () => {
+    const ll = marker.getLngLat();
+    p.lat = ll.lat; p.lng = ll.lng;
+  });
+  points.push(p);
+  recomputeIcons();
+}
+
+// Re-applies the correct icon (numbered vs finish flag) to every point,
+// since the finish is just "whichever point is currently last".
+function recomputeIcons() {
+  points.forEach((p, i) => {
+    setPinContent(p.marker.getElement(), i === points.length - 1, i + 1);
+  });
+}
+
+function clearAll() {
+  if (locked) return;
+  points.forEach(p => p.marker.remove());
+  points = [];
+  updateRideButton();
+}
+
+function updateRideButton() {
+  document.getElementById('rideBtn').disabled = points.length < 1;
+}
+
+// ---------- Reorder modal ----------
+let dragState = null;
+
+function openReorder() {
+  if (locked) return;
+  if (points.length < 2) { alert('Add at least two points to reorder them.'); return; }
+  const list = document.getElementById('reorderList');
+  list.innerHTML = '';
+  points.forEach((p, i) => {
+    const isFinish = i === points.length - 1;
+    const row = document.createElement('div');
+    row.className = 'reorderRow';
+    row.dataset.idx = i;
+    row.innerHTML = `<span class="rr-num${isFinish ? ' rr-finish' : ''}">${isFinish ? '🏁' : (i + 1)}</span><span>${isFinish ? 'Finish' : 'Waypoint ' + (i + 1)}</span><span class="rr-handle">⋮⋮</span>`;
+    attachDrag(row);
+    list.appendChild(row);
+  });
+  document.getElementById('reorderOverlay').style.display = 'flex';
+}
+
+function closeReorder() {
+  document.getElementById('reorderOverlay').style.display = 'none';
+  const rows = [...document.querySelectorAll('#reorderList .reorderRow')];
+  points = rows.map(r => points[parseInt(r.dataset.idx, 10)]);
+  recomputeIcons();
+}
+
+function attachDrag(row) {
+  const handle = row.querySelector('.rr-handle');
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const list = document.getElementById('reorderList');
+    row.classList.add('dragging');
+    dragState = { row, startY: e.clientY, origIndex: [...list.children].indexOf(row) };
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragState || dragState.row !== row) return;
+    const list = document.getElementById('reorderList');
+    const rows = [...list.children];
+    const dragEl = dragState.row;
+    const y = e.clientY;
+    for (const sibling of rows) {
+      if (sibling === dragEl) continue;
+      const rect = sibling.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      if (y < mid && sibling.previousElementSibling === dragEl) {
+        list.insertBefore(dragEl, sibling);
+        break;
+      }
+      if (y > mid && sibling.nextElementSibling === dragEl) {
+        list.insertBefore(sibling, dragEl);
+        break;
+      }
+    }
+  });
+  const endDrag = () => { if (dragState && dragState.row === row) { row.classList.remove('dragging'); dragState = null; } };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+}
+
+// ---------- Ride lock/unlock ----------
+function toggleRide() {
+  locked = !locked;
+  const rideBtn = document.getElementById('rideBtn');
+  const unlockBtn = document.getElementById('unlockBtn');
+  const editBar = document.getElementById('editBar');
+  const navPanel = document.getElementById('navPanel');
+  const viewModeBtn = document.getElementById('viewModeBtn');
+
+  if (locked) {
+    routeSeq = [...points];
+    visitedCount = 0;
+    points.forEach(p => p.marker.setDraggable(false));
+    editBar.style.display = 'none';
+    rideBtn.style.display = 'none';
+    unlockBtn.style.display = 'block';
+    navPanel.style.display = 'flex';
+    viewModeBtn.style.display = 'block';
+    document.getElementById('rideDataBtn').style.display = 'block';
+    document.getElementById('finishToast').style.display = 'none';
+    viewMode = 'follow';
+    viewModeBtn.textContent = 'Normal map';
+    applyViewMode();
+
+    // Reset ride-data tracking for this ride
+    rideStartTime = Date.now();
+    totalDistanceMeters = 0;
+    lastDistFix = currentPos ? { ...currentPos } : null;
+  } else {
+    points.forEach(p => p.marker.setDraggable(true));
+    editBar.style.display = 'flex';
+    rideBtn.style.display = 'block';
+    unlockBtn.style.display = 'none';
+    navPanel.style.display = 'none';
+    viewModeBtn.style.display = 'none';
+    document.getElementById('rideDataBtn').style.display = 'none';
+    document.getElementById('edgeStar').style.display = 'none';
+    clearPulse();
+    map.easeTo({ pitch: 55, bearing: 0, duration: 400 });
+  }
+}
+
+function toggleViewMode() {
+  viewMode = (viewMode === 'follow') ? 'normal' : 'follow';
+  document.getElementById('viewModeBtn').textContent = (viewMode === 'follow') ? 'Normal map' : '3D follow';
+  applyViewMode();
+}
+
+function applyViewMode() {
+  if (viewMode === 'follow') {
+    if (currentPos) {
+      map.easeTo({ center: [currentPos.lng, currentPos.lat], pitch: 55, bearing: heading || 0, zoom: Math.max(map.getZoom(), 17), duration: 400 });
+    }
+  } else {
+    map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+  }
+}
+
+// ---------- Geo math ----------
+function toRad(d) { return d * Math.PI / 180; }
+function toDeg(r) { return r * 180 / Math.PI; }
+
+function haversineMeters(a, b) {
+  const R = 6371000;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function bearingDeg(a, b) {
+  const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1)*Math.sin(lat2) - Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// ---------- Live position ----------
+function onPosition(pos) {
+  currentPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  const now = Date.now();
+
+  // Speed: prefer the GPS-reported speed; fall back to distance/time between fixes.
+  if (typeof pos.coords.speed === 'number' && pos.coords.speed !== null && !isNaN(pos.coords.speed)) {
+    currentSpeedKmh = pos.coords.speed * 3.6;
+  } else if (lastSpeedFix) {
+    const dt = (now - lastSpeedFix.t) / 1000;
+    if (dt > 0.5) {
+      const d = haversineMeters(lastSpeedFix, currentPos);
+      currentSpeedKmh = (d / dt) * 3.6;
+    }
+  }
+  lastSpeedFix = { lat: currentPos.lat, lng: currentPos.lng, t: now };
+  if (currentSpeedKmh < 0 || isNaN(currentSpeedKmh)) currentSpeedKmh = 0;
+
+  if (locked) {
+    if (lastDistFix) totalDistanceMeters += haversineMeters(lastDistFix, currentPos);
+    lastDistFix = { ...currentPos };
+    document.getElementById('speedVal').innerHTML = `${Math.round(currentSpeedKmh)}<span class="unit">km/h</span>`;
+  }
+
+  if (!meMarker) {
+    const dot = document.createElement('div');
+    dot.className = 'me-dot';
+    meMarker = new maplibregl.Marker({ element: dot }).setLngLat([currentPos.lng, currentPos.lat]).addTo(map);
+    map.jumpTo({ center: [currentPos.lng, currentPos.lat], zoom: 16 });
+  } else {
+    meMarker.setLngLat([currentPos.lng, currentPos.lat]);
+  }
+
+  if (locked && viewMode === 'follow') {
+    map.easeTo({ center: [currentPos.lng, currentPos.lat], bearing: heading || map.getBearing(), duration: 300 });
+  }
+
+  if (locked) updateNav();
+}
+
+function onOrientation(e) {
+  if (typeof e.alpha !== 'number') return;
+  heading = (360 - e.alpha) % 360;
+  if (locked && viewMode === 'follow') {
+    map.easeTo({ bearing: heading, duration: 200 });
+  }
+  if (locked) updateNav();
+}
+
+// ---------- Nav overlay logic ----------
+let pulsedEl = null;
+
+function setPulse(marker) {
+  const el = marker ? marker.getElement() : null;
+  if (pulsedEl && pulsedEl !== el) pulsedEl.classList.remove('pulse-target');
+  if (el) el.classList.add('pulse-target');
+  pulsedEl = el || null;
+}
+function clearPulse() {
+  if (pulsedEl) pulsedEl.classList.remove('pulse-target');
+  pulsedEl = null;
+}
+
+function updateNav() {
+  if (heading !== null) {
+    const target = (360 - heading) % 360;
+    if (compassAngle === null) {
+      compassAngle = target;
+    } else {
+      // Shortest signed delta to the target, so the needle never spins the "long way"
+      // around through 360->0, which is what caused the glitch at North.
+      const delta = ((target - compassAngle + 540) % 360) - 180;
+      compassAngle += delta;
+    }
+    document.getElementById('compassNeedle').style.transform = `rotate(${compassAngle}deg)`;
+  }
+  if (!currentPos) return;
+
+  while (visitedCount < routeSeq.length && haversineMeters(currentPos, routeSeq[visitedCount]) < ARRIVAL_METERS) {
+    visitedCount++;
+  }
+
+  const edgeStar = document.getElementById('edgeStar');
+
+  if (visitedCount >= routeSeq.length) {
+    document.getElementById('finishToast').style.display = 'block';
+    document.getElementById('navDistVal').textContent = '--';
+    document.getElementById('navNext').textContent = 'route complete';
+    edgeStar.style.display = 'none';
+    clearPulse();
+    return;
+  }
+
+  const next1 = routeSeq[visitedCount];
+  const d1 = haversineMeters(currentPos, next1);
+  document.getElementById('navDistVal').textContent = d1 < 1000 ? `${Math.round(d1)} m` : `${(d1/1000).toFixed(1)} km`;
+  document.getElementById('navNext').textContent = (visitedCount === routeSeq.length - 1) ? 'to finish' : `to waypoint ${visitedCount + 1}`;
+
+  const inView = map.getBounds().contains([next1.lng, next1.lat]);
+
+  if (inView) {
+    edgeStar.style.display = 'none';
+    setPulse(next1.marker);
+    return;
+  }
+  clearPulse();
+  if (heading === null) return;
+
+  const bearing = bearingDeg(currentPos, next1);
+  const rel = (bearing - heading + 360) % 360;
+
+  const w = window.innerWidth, h = window.innerHeight;
+  const cx = w / 2, cy = h / 2;
+  const margin = 34;
+  const rad = toRad(rel);
+  const dx = Math.sin(rad), dy = -Math.cos(rad);
+
+  let t = Infinity;
+  if (dx !== 0) t = Math.min(t, (w / 2 - margin) / Math.abs(dx));
+  if (dy !== 0) t = Math.min(t, (h / 2 - margin) / Math.abs(dy));
+
+  const x = cx + dx * t;
+  const y = cy + dy * t;
+
+  edgeStar.style.transform = `translate(${x - 15}px, ${y - 15}px)`;
+  edgeStar.style.display = 'block';
+}
+
+// ---------- Ride data overlay ----------
+let rideDataInterval = null;
+
+function openRideData() {
+  updateRideDataDisplay();
+  rideDataInterval = setInterval(updateRideDataDisplay, 1000);
+  document.getElementById('rideDataOverlay').style.display = 'flex';
+}
+
+function closeRideData() {
+  document.getElementById('rideDataOverlay').style.display = 'none';
+  if (rideDataInterval) { clearInterval(rideDataInterval); rideDataInterval = null; }
+}
+
+function updateRideDataDisplay() {
+  const now = new Date();
+  document.getElementById('rdTime').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  if (currentPos && typeof SunCalc !== 'undefined') {
+    const times = SunCalc.getTimes(now, currentPos.lat, currentPos.lng);
+    document.getElementById('rdSunset').textContent = times.sunset
+      ? times.sunset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : '—';
+  } else {
+    document.getElementById('rdSunset').textContent = '—';
+  }
+
+  const elapsedH = rideStartTime ? (Date.now() - rideStartTime) / 3600000 : 0;
+  const distKm = totalDistanceMeters / 1000;
+  const avgSpeed = elapsedH > 0 ? distKm / elapsedH : 0;
+
+  document.getElementById('rdAvgSpeed').textContent = `${avgSpeed.toFixed(1)} km/h`;
+  document.getElementById('rdDistance').textContent = distKm < 1 ? `${Math.round(totalDistanceMeters)} m` : `${distKm.toFixed(2)} km`;
+}
+
+// ---------- Permissions ----------
+function requestPermissions() {
+  const finish = () => {
+    document.getElementById('permOverlay').style.display = 'none';
+    startWatching();
+  };
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then(state => {
+      if (state === 'granted') attachOrientation();
+      finish();
+    }).catch(finish);
+  } else {
+    attachOrientation();
+    finish();
+  }
+}
+
+function attachOrientation() {
+  if ('ondeviceorientationabsolute' in window) {
+    window.addEventListener('deviceorientationabsolute', onOrientation, true);
+  } else {
+    window.addEventListener('deviceorientation', onOrientation, true);
+  }
+}
+
+function startWatching() {
+  if (!navigator.geolocation) {
+    alert('Geolocation not available in this browser.');
+    return;
+  }
+  watchId = navigator.geolocation.watchPosition(onPosition, err => console.warn('geo error', err), {
+    enableHighAccuracy: true,
+    maximumAge: 1000,
+    timeout: 10000
+  });
+}
+
+// ---------- Boot ----------
+initMap();
+</script>
+</body>
+</html>
